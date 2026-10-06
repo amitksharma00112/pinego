@@ -140,6 +140,25 @@ func (l *Lexer) Tokenize() ([]token.Token, error) {
 		)
 	}
 
+	// Reject unclosed grouped expressions.
+	if l.parenDepth != 0 {
+		return nil, fmt.Errorf(
+			"unclosed '(' at end of input",
+		)
+	}
+
+	if l.bracketDepth != 0 {
+		return nil, fmt.Errorf(
+			"unclosed '[' at end of input",
+		)
+	}
+
+	if l.braceDepth != 0 {
+		return nil, fmt.Errorf(
+			"unclosed '{' at end of input",
+		)
+	}
+
 	// Close open indentation levels.
 	for len(l.indentStack) > 1 {
 		l.indentStack = l.indentStack[:len(l.indentStack)-1]
@@ -212,8 +231,23 @@ indentationDone:
 	}
 
 	// Non-multiple-of-four indentation is a wrapped continuation.
+	// Non-multiple-of-four indentation is only valid for a wrapped
+	// continuation when the previous logical token requires more input.
 	if width%tabWidth != 0 {
-		l.joinWithPreviousLine(width, startColumn)
+		if l.isContinuationFromPreviousToken() {
+			l.joinWithPreviousLine(width, startColumn)
+			return
+		}
+
+		l.fail(
+			fmt.Sprintf(
+				"indentation error at %d:%d: misaligned indentation of %d columns",
+				l.line,
+				l.column,
+				width,
+			),
+		)
+
 		return
 	}
 
