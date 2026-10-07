@@ -58,4 +58,46 @@ func TestStatementNodes(t *testing.T) {
 	var _ Stmt = (*ReturnStmt)(nil)
 	var _ Stmt = (*BreakStmt)(nil)
 	var _ Stmt = (*ContinueStmt)(nil)
+	var _ Stmt = (*FunctionDeclStmt)(nil)
+}
+
+func TestParameterNode(t *testing.T) {
+	param := &Parameter{
+		TypeName: "float",
+		Name: &Identifier{
+			Name: "price",
+		},
+	}
+
+	if param.TypeName != "float" {
+		t.Fatalf("got %q, want float", param.TypeName)
+	}
+
+	if param.Name.Name != "price" {
+		t.Fatalf("got %q, want price", param.Name.Name)
+	}
+}
+
+func TestFunctionDeclNode(t *testing.T) {
+	fn := &FunctionDeclStmt{
+		Name: &Identifier{
+			Name: "add",
+		},
+		Parameters: []*Parameter{
+			{
+				TypeName: "float",
+				Name: &Identifier{
+					Name: "x",
+				},
+			},
+		},
+	}
+
+	if fn.Name.Name != "add" {
+		t.Fatalf("got %q, want add", fn.Name.Name)
+	}
+
+	if len(fn.Parameters) != 1 {
+		t.Fatalf("got %d parameters, want 1", len(fn.Parameters))
+	}
 }

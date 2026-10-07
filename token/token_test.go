@@ -46,7 +46,6 @@ func TestReservedWords(t *testing.T) {
 		"do",
 		"ellipse",
 		"polygon",
-		"return",
 		"struct",
 		"text",
 		"throw",

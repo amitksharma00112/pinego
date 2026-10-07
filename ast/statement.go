@@ -3,6 +3,7 @@ package ast
 import "github.com/amitksharma00112/pinego/token"
 
 // AssignmentStmt represents:
+//
 // x = 10
 // x := 10
 // x += 5
@@ -34,10 +35,16 @@ func (e *ExpressionStmt) Span() token.Span {
 }
 
 // VariableDeclStmt represents:
+//
 // var x = 10
 // varip x = 10
+// var float x = 10
+// varip int x = 10
+// float x = 10
+// int x = 10
 type VariableDeclStmt struct {
 	Keyword    string
+	TypeName   string
 	Name       *Identifier
 	Value      Expr
 	SourceSpan token.Span
@@ -48,6 +55,45 @@ func (*VariableDeclStmt) stmt() {}
 
 func (v *VariableDeclStmt) Span() token.Span {
 	return v.SourceSpan
+}
+
+// Parameter represents a function parameter.
+//
+// x
+// float x
+// int length
+type Parameter struct {
+	TypeName   string
+	Name       *Identifier
+	SourceSpan token.Span
+}
+
+func (p *Parameter) Span() token.Span {
+	return p.SourceSpan
+}
+
+// FunctionDeclStmt represents:
+//
+// add(x, y) =>
+//
+//	x + y
+//
+// add(float x, float y) =>
+//
+//	result = x + y
+//	return result
+type FunctionDeclStmt struct {
+	Name       *Identifier
+	Parameters []*Parameter
+	Body       *BlockStmt
+	SourceSpan token.Span
+}
+
+func (*FunctionDeclStmt) node() {}
+func (*FunctionDeclStmt) stmt() {}
+
+func (f *FunctionDeclStmt) Span() token.Span {
+	return f.SourceSpan
 }
 
 // BlockStmt represents an indented block.
@@ -69,12 +115,17 @@ func (b *BlockStmt) Span() token.Span {
 //
 //	...
 //
+// else if condition
+//
+//	...
+//
 // else
 //
 //	...
 type IfStmt struct {
 	Condition  Expr
 	Then       *BlockStmt
+	ElseIf     *IfStmt
 	Else       *BlockStmt
 	SourceSpan token.Span
 }
@@ -87,6 +138,7 @@ func (i *IfStmt) Span() token.Span {
 }
 
 // ReturnStmt represents:
+//
 // return
 // return expression
 type ReturnStmt struct {

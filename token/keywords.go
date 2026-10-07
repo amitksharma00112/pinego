@@ -10,6 +10,7 @@ var Keywords = map[string]struct{}{
 	"switch":   {},
 	"break":    {},
 	"continue": {},
+	"return":   {},
 
 	// Declarations
 	"var":   {},
@@ -32,8 +33,8 @@ var Keywords = map[string]struct{}{
 	"enum":   {},
 }
 
-// ContextualKeywords are words that are keywords only in
-// specific syntactic contexts.
+// ContextualKeywords are words that have special meaning
+// only in specific syntactic contexts.
 var ContextualKeywords = map[string]struct{}{
 	"type":   {},
 	"method": {},
@@ -43,7 +44,7 @@ var ContextualKeywords = map[string]struct{}{
 // ReservedWords are names that Pine should reject at
 // declaration/name-binding positions.
 //
-// They are still lexed as identifiers.
+// They are still lexed separately from normal keywords.
 var ReservedWords = map[string]struct{}{
 	"catch":   {},
 	"class":   {},
@@ -52,7 +53,6 @@ var ReservedWords = map[string]struct{}{
 	"is":      {},
 	"polygon": {},
 	"range":   {},
-	"return":  {},
 	"struct":  {},
 	"text":    {},
 	"throw":   {},
