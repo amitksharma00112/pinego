@@ -14,6 +14,53 @@ type AssignmentStmt struct {
 	SourceSpan token.Span
 }
 
+// WhileStmt represents:
+//
+// while condition
+//
+//	statements
+type WhileStmt struct {
+	Condition  Expr
+	Body       *BlockStmt
+	SourceSpan token.Span
+}
+
+func (*WhileStmt) node() {}
+func (*WhileStmt) stmt() {}
+
+func (w *WhileStmt) Span() token.Span {
+	return w.SourceSpan
+}
+
+// ForStmt represents:
+//
+// for i = 0 to 10
+//
+//	statements
+//
+// and:
+//
+// for item in collection
+//
+//	statements
+type ForStmt struct {
+	Variable   *Identifier
+	From       Expr
+	To         Expr
+	Step       Expr
+	Iterable   Expr
+	Body       *BlockStmt
+	IsInLoop   bool
+	SourceSpan token.Span
+}
+
+func (*ForStmt) node() {}
+func (*ForStmt) stmt() {}
+
+func (f *ForStmt) Span() token.Span {
+	return f.SourceSpan
+}
+
 func (*AssignmentStmt) node() {}
 func (*AssignmentStmt) stmt() {}
 

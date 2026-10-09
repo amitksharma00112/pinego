@@ -571,3 +571,64 @@ func TestParseErrors(t *testing.T) {
 		})
 	}
 }
+func TestParseWhile(t *testing.T) {
+	source := `while x < 10
+    x = x + 1`
+
+	program, err := ParseSource(source)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	if len(program.Statements) != 1 {
+		t.Fatalf("got %d statements, want 1", len(program.Statements))
+	}
+
+	stmt, ok := program.Statements[0].(*ast.WhileStmt)
+	if !ok {
+		t.Fatalf("got %T, want *ast.WhileStmt", program.Statements[0])
+	}
+
+	if stmt.Condition == nil {
+		t.Fatal("expected while condition")
+	}
+
+	if stmt.Body == nil {
+		t.Fatal("expected while body")
+	}
+}
+
+func TestParseFor(t *testing.T) {
+	source := `for i = 0 to 10
+    x = i`
+
+	program, err := ParseSource(source)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	if len(program.Statements) != 1 {
+		t.Fatalf("got %d statements, want 1", len(program.Statements))
+	}
+
+	stmt, ok := program.Statements[0].(*ast.ForStmt)
+	if !ok {
+		t.Fatalf("got %T, want *ast.ForStmt", program.Statements[0])
+	}
+
+	if stmt.Variable == nil {
+		t.Fatal("expected loop variable")
+	}
+
+	if stmt.From == nil {
+		t.Fatal("expected from expression")
+	}
+
+	if stmt.To == nil {
+		t.Fatal("expected to expression")
+	}
+
+	if stmt.Body == nil {
+		t.Fatal("expected for body")
+	}
+}

@@ -110,6 +110,10 @@ func (p *Parser) parseStatement() (ast.Stmt, error) {
 
 		case "if":
 			return p.parseIf()
+		case "while":
+			return p.parseWhile()
+		case "for":
+			return p.parseFor()
 
 		case "return":
 			return p.parseReturn()
@@ -522,6 +526,97 @@ func (p *Parser) parseIf() (ast.Stmt, error) {
 		SourceSpan: token.Span{
 			Start: ifTok.Span.Start,
 			End:   end,
+		},
+	}, nil
+}
+
+func (p *Parser) parseWhile() (ast.Stmt, error) {
+	whileTok := p.current()
+	p.advance()
+
+	condition, err := p.parseExpression(0)
+	if err != nil {
+		return nil, err
+	}
+
+	body, err := p.parseIndentedBlock()
+	if err != nil {
+		return nil, err
+	}
+
+	return &ast.WhileStmt{
+		Condition: condition,
+		Body:      body,
+		SourceSpan: token.Span{
+			Start: whileTok.Span.Start,
+			End:   body.Span().End,
+		},
+	}, nil
+}
+func (p *Parser) parseFor() (ast.Stmt, error) {
+	forTok := p.current()
+	p.advance()
+
+	if p.current().Type != token.IDENTIFIER {
+		return nil, p.errorf("expected loop variable after 'for'")
+	}
+
+	varTok := p.current()
+	p.advance()
+
+	variable := &ast.Identifier{
+		Name:       stringValue(varTok.Value),
+		SourceSpan: varTok.Span,
+	}
+
+	if !p.isAssignmentOperator(p.current()) ||
+		stringValue(p.current().Value) != "=" {
+		return nil, p.errorf("expected '=' after loop variable")
+	}
+	p.advance()
+
+	from, err := p.parseExpression(0)
+	if err != nil {
+		return nil, err
+	}
+
+	if p.current().Type != token.KEYWORD ||
+		stringValue(p.current().Value) != "to" {
+		return nil, p.errorf("expected 'to' in for loop")
+	}
+	p.advance()
+
+	to, err := p.parseExpression(0)
+	if err != nil {
+		return nil, err
+	}
+
+	var step ast.Expr
+
+	if p.current().Type == token.KEYWORD &&
+		stringValue(p.current().Value) == "by" {
+		p.advance()
+
+		step, err = p.parseExpression(0)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	body, err := p.parseIndentedBlock()
+	if err != nil {
+		return nil, err
+	}
+
+	return &ast.ForStmt{
+		Variable: variable,
+		From:     from,
+		To:       to,
+		Step:     step,
+		Body:     body,
+		SourceSpan: token.Span{
+			Start: forTok.Span.Start,
+			End:   body.Span().End,
 		},
 	}, nil
 }
