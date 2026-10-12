@@ -76,6 +76,11 @@ func (p *Program) Validate() error {
 			}
 			blockIDs[block.ID] = true
 		}
+		for id := 0; id < len(blocks); id++ {
+			if !blockIDs[id] {
+				return fmt.Errorf("%s has non-contiguous block IDs: missing ID %d", scope, id)
+			}
+		}
 
 		for _, block := range blocks {
 			for i, inst := range block.Instructions {
@@ -135,7 +140,9 @@ func (p *Program) Validate() error {
 		if fn.Name == "" {
 			return fmt.Errorf("IR function has empty name")
 		}
-
+		if len(fn.Blocks) == 0 {
+			return fmt.Errorf("function %q has no basic blocks", fn.Name)
+		}
 		for _, block := range fn.Blocks {
 			for _, inst := range block.Instructions {
 				if inst.Op == "" {

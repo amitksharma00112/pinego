@@ -126,3 +126,26 @@ func TestValidateRejectsNegativeBlockID(t *testing.T) {
 		t.Fatal("expected error for negative block ID")
 	}
 }
+func TestValidateRejectsNonContiguousBlockIDs(t *testing.T) {
+	program := &Program{
+		GlobalBlocks: []Block{
+			{ID: 0},
+			{ID: 2},
+		},
+	}
+
+	if err := program.Validate(); err == nil {
+		t.Fatal("expected error for non-contiguous block IDs")
+	}
+}
+func TestValidateRejectsFunctionWithoutBlocks(t *testing.T) {
+	program := &Program{
+		Functions: []Function{
+			{Name: "main"},
+		},
+	}
+
+	if err := program.Validate(); err == nil {
+		t.Fatal("expected error for function without blocks")
+	}
+}
