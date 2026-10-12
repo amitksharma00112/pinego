@@ -18,6 +18,9 @@ const (
 	OpIndex  Op = "index"
 	OpMember Op = "member"
 	OpPhi    Op = "phi"
+	OpBranch Op = "branch"
+	OpJump   Op = "jump"
+	OpReturn Op = "return"
 )
 
 // Instruction represents one IR operation.
@@ -29,6 +32,8 @@ type Instruction struct {
 	Name     string
 	Operator string
 	Value    any
+	Target   int
+	Targets  []int
 }
 
 // Block groups a sequence of IR instructions.
@@ -46,8 +51,9 @@ type Function struct {
 
 // Program is the root of the intermediate representation.
 type Program struct {
-	Functions []Function
-	Globals   []Instruction
+	Functions    []Function
+	Globals      []Instruction
+	GlobalBlocks []Block
 }
 
 // Validate checks basic IR invariants.
