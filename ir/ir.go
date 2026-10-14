@@ -21,6 +21,7 @@ const (
 	OpBranch Op = "branch"
 	OpJump   Op = "jump"
 	OpReturn Op = "return"
+	OpTrap   Op = "trap"
 )
 
 // Instruction represents one IR operation.
@@ -85,7 +86,8 @@ func (p *Program) Validate() error {
 		for _, block := range blocks {
 			for i, inst := range block.Instructions {
 				switch inst.Op {
-				case OpBranch, OpJump, OpReturn:
+
+				case OpBranch, OpJump, OpReturn, OpTrap:
 					if i != len(block.Instructions)-1 {
 						return fmt.Errorf(
 							"%s block %d has instruction after terminator %q",
@@ -93,7 +95,12 @@ func (p *Program) Validate() error {
 						)
 					}
 				}
-
+				if inst.Op == "" {
+					return fmt.Errorf(
+						"%s block %d has instruction with empty operation",
+						scope, block.ID,
+					)
+				}
 				switch inst.Op {
 				case OpJump:
 					if len(inst.Targets) != 0 {
@@ -115,7 +122,20 @@ func (p *Program) Validate() error {
 							scope, block.ID,
 						)
 					}
+				case OpTrap:
+					if inst.Target != 0 || len(inst.Targets) != 0 || len(inst.Args) != 0 {
+						return fmt.Errorf(
+							"%s block %d trap must not have arguments or jump targets",
+							scope, block.ID,
+						)
+					}
 				case OpBranch:
+					if len(inst.Args) != 1 {
+						return fmt.Errorf(
+							"%s block %d branch requires exactly one condition",
+							scope, block.ID,
+						)
+					}
 					if len(inst.Targets) != 2 {
 						return fmt.Errorf(
 							"%s block %d branch requires exactly 2 targets, got %d",
@@ -143,17 +163,7 @@ func (p *Program) Validate() error {
 		if len(fn.Blocks) == 0 {
 			return fmt.Errorf("function %q has no basic blocks", fn.Name)
 		}
-		for _, block := range fn.Blocks {
-			for _, inst := range block.Instructions {
-				if inst.Op == "" {
-					return fmt.Errorf(
-						"function %q block %d has instruction with empty operation",
-						fn.Name,
-						block.ID,
-					)
-				}
-			}
-		}
+
 	}
 
 	for _, inst := range p.Globals {

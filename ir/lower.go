@@ -45,8 +45,9 @@ func Lower(program *ast.Program) (*Program, error) {
 		default:
 			if globalCFG == nil {
 				switch stmt.(type) {
-				case *ast.IfStmt, *ast.WhileStmt:
-					// CFG required
+				case *ast.IfStmt, *ast.WhileStmt, *ast.ForStmt,
+					*ast.BreakStmt, *ast.ContinueStmt:
+				// CFG required
 				default:
 					if err := l.lowerStmt(stmt, &result.Globals); err != nil {
 						return nil, fmt.Errorf("global statement: %w", err)
@@ -88,9 +89,12 @@ type lowerer struct {
 }
 
 type cfgBuilder struct {
-	lowerer *lowerer
-	blocks  []Block
-	current int
+	lowerer        *lowerer
+	blocks         []Block
+	current        int
+	breakTarget    int
+	continueTarget int
+	loopDepth      int
 }
 
 func newCFGBuilder(l *lowerer) *cfgBuilder {
@@ -120,7 +124,7 @@ func (c *cfgBuilder) terminated() bool {
 	}
 
 	switch instructions[len(instructions)-1].Op {
-	case OpBranch, OpJump, OpReturn:
+	case OpBranch, OpJump, OpReturn, OpTrap:
 		return true
 	default:
 		return false
@@ -192,7 +196,18 @@ func (c *cfgBuilder) lowerWhile(s *ast.WhileStmt) error {
 	conditionID := c.newBlock()
 	bodyID := c.newBlock()
 	exitID := c.newBlock()
+	oldBreak, oldContinue := c.breakTarget, c.continueTarget
+	oldDepth := c.loopDepth
 
+	c.breakTarget = exitID
+	c.continueTarget = conditionID
+	c.loopDepth++
+
+	defer func() {
+		c.breakTarget = oldBreak
+		c.continueTarget = oldContinue
+		c.loopDepth = oldDepth
+	}()
 	c.jump(conditionID)
 
 	c.current = conditionID
@@ -221,6 +236,221 @@ func (c *cfgBuilder) lowerWhile(s *ast.WhileStmt) error {
 	c.current = exitID
 	return nil
 }
+
+func (c *cfgBuilder) lowerFor(s *ast.ForStmt) error {
+	if s.IsInLoop || s.Iterable != nil {
+		return fmt.Errorf("for-in iterable loops are not supported yet")
+	}
+	if s.Variable == nil || s.From == nil || s.To == nil || s.Body == nil {
+		return fmt.Errorf("for statement requires variable, from, to and body")
+	}
+
+	step := s.Step
+	if step == nil {
+		step = &ast.NumberLiteral{Value: 1}
+	}
+	if n, ok := step.(*ast.NumberLiteral); ok && n.Value == 0 {
+		return fmt.Errorf("for loop step cannot be zero")
+	}
+
+	from, err := c.lowerer.lowerExpr(
+		s.From, &c.blocks[c.current].Instructions,
+	)
+	if err != nil {
+		return err
+	}
+
+	c.emit(Instruction{
+		Op:   OpStore,
+		Name: s.Variable.Name,
+		Args: []ValueID{from},
+	})
+
+	stepValue, err := c.lowerer.lowerExpr(
+		step, &c.blocks[c.current].Instructions,
+	)
+	if err != nil {
+		return err
+	}
+
+	_, literalStep := step.(*ast.NumberLiteral)
+	if !literalStep {
+		zero := c.lowerer.emit(
+			&c.blocks[c.current].Instructions,
+			Instruction{Op: OpConst, Type: "number", Value: 0},
+		)
+		stepIsZero := c.lowerer.emit(
+			&c.blocks[c.current].Instructions,
+			Instruction{
+				Op:       OpBinary,
+				Operator: "==",
+				Args:     []ValueID{stepValue, zero},
+			},
+		)
+
+		trapID := c.newBlock()
+		continueID := c.newBlock()
+
+		c.emit(Instruction{
+			Op:      OpBranch,
+			Args:    []ValueID{stepIsZero},
+			Targets: []int{trapID, continueID},
+		})
+
+		c.current = trapID
+		c.emit(Instruction{
+			Op:   OpTrap,
+			Name: "for loop step cannot be zero",
+		})
+
+		c.current = continueID
+
+	}
+	toValue, err := c.lowerer.lowerExpr(
+		s.To, &c.blocks[c.current].Instructions,
+	)
+	if err != nil {
+		return err
+	}
+	conditionID := c.newBlock()
+	bodyID := c.newBlock()
+	incrementID := c.newBlock()
+	exitID := c.newBlock()
+
+	var ascendingID, descendingID int
+	_, literalStep = step.(*ast.NumberLiteral)
+	if !literalStep {
+		ascendingID = c.newBlock()
+		descendingID = c.newBlock()
+	}
+
+	oldBreak, oldContinue := c.breakTarget, c.continueTarget
+	oldDepth := c.loopDepth
+
+	c.breakTarget = exitID
+	c.continueTarget = incrementID
+	c.loopDepth++
+
+	defer func() {
+		c.breakTarget = oldBreak
+		c.continueTarget = oldContinue
+		c.loopDepth = oldDepth
+	}()
+
+	c.jump(conditionID)
+	c.current = conditionID
+
+	if n, ok := step.(*ast.NumberLiteral); ok {
+		operator := "<="
+		if n.Value < 0 {
+			operator = ">="
+		}
+
+		currentValue := c.lowerer.emit(
+			&c.blocks[c.current].Instructions,
+			Instruction{Op: OpLoad, Name: s.Variable.Name},
+		)
+
+		condition := c.lowerer.emit(
+			&c.blocks[c.current].Instructions,
+			Instruction{
+				Op:       OpBinary,
+				Operator: operator,
+				Args:     []ValueID{currentValue, toValue},
+			},
+		)
+
+		c.emit(Instruction{
+			Op:      OpBranch,
+			Args:    []ValueID{condition},
+			Targets: []int{bodyID, exitID},
+		})
+	} else {
+		zero := c.lowerer.emit(
+			&c.blocks[c.current].Instructions,
+			Instruction{Op: OpConst, Type: "number", Value: 0},
+		)
+
+		nonNegative := c.lowerer.emit(
+			&c.blocks[c.current].Instructions,
+			Instruction{
+				Op:       OpBinary,
+				Operator: ">=",
+				Args:     []ValueID{stepValue, zero},
+			},
+		)
+
+		c.emit(Instruction{
+			Op:      OpBranch,
+			Args:    []ValueID{nonNegative},
+			Targets: []int{ascendingID, descendingID},
+		})
+
+		for _, direction := range []struct {
+			id       int
+			operator string
+		}{
+			{ascendingID, "<="},
+			{descendingID, ">="},
+		} {
+			c.current = direction.id
+
+			currentValue := c.lowerer.emit(
+				&c.blocks[c.current].Instructions,
+				Instruction{Op: OpLoad, Name: s.Variable.Name},
+			)
+
+			condition := c.lowerer.emit(
+				&c.blocks[c.current].Instructions,
+				Instruction{
+					Op:       OpBinary,
+					Operator: direction.operator,
+					Args:     []ValueID{currentValue, toValue},
+				},
+			)
+
+			c.emit(Instruction{
+				Op:      OpBranch,
+				Args:    []ValueID{condition},
+				Targets: []int{bodyID, exitID},
+			})
+		}
+	}
+
+	c.current = bodyID
+	if err := c.lowerStmt(s.Body); err != nil {
+		return err
+	}
+	if !c.terminated() {
+		c.jump(incrementID)
+	}
+
+	c.current = incrementID
+	currentValue := c.lowerer.emit(
+		&c.blocks[c.current].Instructions,
+		Instruction{Op: OpLoad, Name: s.Variable.Name},
+	)
+
+	nextValue := c.lowerer.emit(
+		&c.blocks[c.current].Instructions,
+		Instruction{
+			Op:       OpBinary,
+			Operator: "+",
+			Args:     []ValueID{currentValue, stepValue},
+		},
+	)
+
+	c.emit(Instruction{
+		Op:   OpStore,
+		Name: s.Variable.Name,
+		Args: []ValueID{nextValue},
+	})
+	c.jump(conditionID)
+
+	c.current = exitID
+	return nil
+}
+
 func (c *cfgBuilder) lowerStmt(stmt ast.Stmt) error {
 	if stmt == nil {
 		return fmt.Errorf("cannot lower nil statement")
@@ -235,6 +465,20 @@ func (c *cfgBuilder) lowerStmt(stmt ast.Stmt) error {
 		return c.lowerIf(s)
 	case *ast.WhileStmt:
 		return c.lowerWhile(s)
+	case *ast.ForStmt:
+		return c.lowerFor(s)
+	case *ast.BreakStmt:
+		if c.loopDepth == 0 {
+			return fmt.Errorf("break outside loop")
+		}
+		c.jump(c.breakTarget)
+		return nil
+	case *ast.ContinueStmt:
+		if c.loopDepth == 0 {
+			return fmt.Errorf("continue outside loop")
+		}
+		c.jump(c.continueTarget)
+		return nil
 	case *ast.BlockStmt:
 		for _, child := range s.Statements {
 			if err := c.lowerStmt(child); err != nil {

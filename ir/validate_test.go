@@ -149,3 +149,56 @@ func TestValidateRejectsFunctionWithoutBlocks(t *testing.T) {
 		t.Fatal("expected error for function without blocks")
 	}
 }
+func TestValidateRejectsBranchWithoutCondition(t *testing.T) {
+	program := &Program{
+		GlobalBlocks: []Block{
+			{
+				ID: 0,
+				Instructions: []Instruction{
+					{
+						Op:      OpBranch,
+						Targets: []int{1, 2},
+					},
+				},
+			},
+			{ID: 1},
+			{ID: 2},
+		},
+	}
+
+	if err := program.Validate(); err == nil {
+		t.Fatal("expected error for branch without condition")
+	}
+}
+func TestValidateRejectsEmptyOperationInGlobalBlock(t *testing.T) {
+	program := &Program{
+		GlobalBlocks: []Block{
+			{
+				ID: 0,
+				Instructions: []Instruction{
+					{Op: ""},
+				},
+			},
+		},
+	}
+
+	if err := program.Validate(); err == nil {
+		t.Fatal("expected error for empty operation in global block")
+	}
+}
+func TestValidateTrapTerminator(t *testing.T) {
+	program := &Program{
+		GlobalBlocks: []Block{
+			{
+				ID: 0,
+				Instructions: []Instruction{
+					{Op: OpTrap, Name: "for loop step cannot be zero"},
+				},
+			},
+		},
+	}
+
+	if err := program.Validate(); err != nil {
+		t.Fatalf("expected valid trap instruction, got: %v", err)
+	}
+}
