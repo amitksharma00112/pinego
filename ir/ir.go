@@ -26,15 +26,16 @@ const (
 
 // Instruction represents one IR operation.
 type Instruction struct {
-	Result   ValueID
-	Op       Op
-	Type     string
-	Args     []ValueID
-	Name     string
-	Operator string
-	Value    any
-	Target   int
-	Targets  []int
+	Result         ValueID
+	Op             Op
+	Type           string
+	Args           []ValueID
+	Name           string
+	Operator       string
+	Value          any
+	Target         int
+	Targets        []int
+	IncomingBlocks []int
 }
 
 // Block groups a sequence of IR instructions.
@@ -150,7 +151,64 @@ func (p *Program) Validate() error {
 							)
 						}
 					}
+				case OpPhi:
+					if len(inst.Args) != len(inst.IncomingBlocks) {
+						return fmt.Errorf(
+							"%s block %d phi requires matching values and incoming blocks",
+							scope, block.ID,
+						)
+					}
+
+					seen := make(map[int]bool)
+					for _, incoming := range inst.IncomingBlocks {
+						if !blockIDs[incoming] {
+							return fmt.Errorf(
+								"%s block %d phi references missing incoming block %d",
+								scope, block.ID, incoming,
+							)
+						}
+						if seen[incoming] {
+							return fmt.Errorf(
+								"%s block %d phi has duplicate incoming block %d",
+								scope, block.ID, incoming,
+							)
+						}
+						seen[incoming] = true
+						foundPredecessor := false
+
+						// Check predecessor edges across all blocks.
+						for _, predecessor := range blocks {
+							if len(predecessor.Instructions) == 0 {
+								continue
+							}
+
+							terminator := predecessor.Instructions[len(predecessor.Instructions)-1]
+							switch terminator.Op {
+							case OpJump:
+								if terminator.Target == block.ID && predecessor.ID == incoming {
+									foundPredecessor = true
+								}
+							case OpBranch:
+								if predecessor.ID == incoming {
+									for _, target := range terminator.Targets {
+										if target == block.ID {
+											foundPredecessor = true
+											break
+										}
+									}
+								}
+							}
+						}
+
+						if !foundPredecessor {
+							return fmt.Errorf(
+								"%s block %d phi incoming block %d is not a predecessor",
+								scope, block.ID, incoming,
+							)
+						}
+					}
 				}
+
 			}
 		}
 

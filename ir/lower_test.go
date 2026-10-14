@@ -805,3 +805,124 @@ func TestLowerForLoopGuardsDynamicZeroStep(t *testing.T) {
 		t.Fatal("expected runtime guard to detect a zero loop step")
 	}
 }
+func TestLowerTernaryExpression(t *testing.T) {
+	program := &ast.Program{
+		Statements: []ast.Stmt{
+			&ast.VariableDeclStmt{
+				Name: &ast.Identifier{Name: "result"},
+				Value: &ast.ConditionalExpr{
+					Condition: &ast.BoolLiteral{Value: true},
+					Then:      &ast.NumberLiteral{Value: 10},
+					Else:      &ast.NumberLiteral{Value: 20},
+				},
+			},
+		},
+	}
+
+	got, err := Lower(program)
+	if err != nil {
+		t.Fatalf("Lower() should support ternary expressions: %v", err)
+	}
+
+	hasBranch, hasPhi := false, false
+
+	for _, block := range got.GlobalBlocks {
+		for _, inst := range block.Instructions {
+			if inst.Op == OpBranch {
+				hasBranch = true
+			}
+
+			if inst.Op == OpPhi {
+				hasPhi = true
+
+				if len(inst.Args) != 2 {
+					t.Fatalf("Phi should have 2 incoming values, got %d", len(inst.Args))
+				}
+				if len(inst.IncomingBlocks) != 2 {
+					t.Fatalf("Phi should have 2 incoming blocks, got %d", len(inst.IncomingBlocks))
+				}
+				if inst.IncomingBlocks[0] == inst.IncomingBlocks[1] {
+					t.Fatal("Phi incoming blocks must be distinct")
+				}
+			}
+		}
+	}
+
+	if !hasBranch {
+		t.Fatal("expected branch for ternary condition")
+	}
+	if !hasPhi {
+		t.Fatal("expected Phi instruction to merge ternary results")
+	}
+
+	if err := got.Validate(); err != nil {
+		t.Fatalf("lowered ternary IR should validate: %v", err)
+	}
+}
+func TestLowerNestedTernaryExpression(t *testing.T) {
+	program := &ast.Program{
+		Statements: []ast.Stmt{
+			&ast.VariableDeclStmt{
+				Name: &ast.Identifier{Name: "result"},
+				Value: &ast.ConditionalExpr{
+					Condition: &ast.BoolLiteral{Value: true},
+					Then: &ast.ConditionalExpr{
+						Condition: &ast.BoolLiteral{Value: false},
+						Then:      &ast.NumberLiteral{Value: 10},
+						Else:      &ast.NumberLiteral{Value: 20},
+					},
+					Else: &ast.NumberLiteral{Value: 30},
+				},
+			},
+		},
+	}
+
+	got, err := Lower(program)
+	if err != nil {
+		t.Fatalf("Lower() should support nested ternary: %v", err)
+	}
+
+	branches, phis := 0, 0
+	for _, block := range got.GlobalBlocks {
+		for _, inst := range block.Instructions {
+			if inst.Op == OpBranch {
+				branches++
+			}
+			if inst.Op == OpPhi {
+				phis++
+				if len(inst.Args) != len(inst.IncomingBlocks) {
+					t.Fatal("Phi values and incoming blocks must match")
+				}
+			}
+		}
+	}
+
+	if branches != 2 {
+		t.Fatalf("expected 2 branches, got %d", branches)
+	}
+	if phis != 2 {
+		t.Fatalf("expected 2 Phi instructions, got %d", phis)
+	}
+}
+func TestLowerTernaryInsideBinaryExpression(t *testing.T) {
+	program := &ast.Program{
+		Statements: []ast.Stmt{
+			&ast.VariableDeclStmt{
+				Name: &ast.Identifier{Name: "result"},
+				Value: &ast.BinaryExpr{
+					Left:     &ast.NumberLiteral{Value: 5},
+					Operator: "+",
+					Right: &ast.ConditionalExpr{
+						Condition: &ast.BoolLiteral{Value: true},
+						Then:      &ast.NumberLiteral{Value: 10},
+						Else:      &ast.NumberLiteral{Value: 20},
+					},
+				},
+			},
+		},
+	}
+
+	if _, err := Lower(program); err != nil {
+		t.Fatalf("Lower() should support ternary inside binary expression: %v", err)
+	}
+}

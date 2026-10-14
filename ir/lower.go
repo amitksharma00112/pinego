@@ -47,12 +47,16 @@ func Lower(program *ast.Program) (*Program, error) {
 				switch stmt.(type) {
 				case *ast.IfStmt, *ast.WhileStmt, *ast.ForStmt,
 					*ast.BreakStmt, *ast.ContinueStmt:
-				// CFG required
+					// CFG required
 				default:
-					if err := l.lowerStmt(stmt, &result.Globals); err != nil {
-						return nil, fmt.Errorf("global statement: %w", err)
+					if containsConditionalExpr(stmt) {
+						// CFG required
+					} else {
+						if err := l.lowerStmt(stmt, &result.Globals); err != nil {
+							return nil, fmt.Errorf("global statement: %w", err)
+						}
+						continue
 					}
-					continue
 				}
 
 				globalCFG = &cfgBuilder{
@@ -450,7 +454,143 @@ func (c *cfgBuilder) lowerFor(s *ast.ForStmt) error {
 	c.current = exitID
 	return nil
 }
+func (c *cfgBuilder) lowerExpr(expr ast.Expr) (ValueID, error) {
+	if expr == nil {
+		return 0, fmt.Errorf("cannot lower nil expression")
+	}
 
+	emit := func(inst Instruction) ValueID {
+		return c.lowerer.emit(
+			&c.blocks[c.current].Instructions,
+			inst,
+		)
+	}
+
+	switch e := expr.(type) {
+	case *ast.ConditionalExpr:
+		if e.Condition == nil || e.Then == nil || e.Else == nil {
+			return 0, fmt.Errorf(
+				"ternary expression requires condition, then, and else",
+			)
+		}
+
+		condition, err := c.lowerExpr(e.Condition)
+		if err != nil {
+			return 0, err
+		}
+
+		thenID := c.newBlock()
+		elseID := c.newBlock()
+		mergeID := c.newBlock()
+
+		c.emit(Instruction{
+			Op:      OpBranch,
+			Args:    []ValueID{condition},
+			Targets: []int{thenID, elseID},
+		})
+
+		c.current = thenID
+		thenValue, err := c.lowerExpr(e.Then)
+		if err != nil {
+			return 0, err
+		}
+		thenBlockID := c.current
+		c.jump(mergeID)
+
+		c.current = elseID
+		elseValue, err := c.lowerExpr(e.Else)
+		if err != nil {
+			return 0, err
+		}
+		elseBlockID := c.current
+		c.jump(mergeID)
+
+		c.current = mergeID
+		result := emit(Instruction{
+			Op:             OpPhi,
+			Args:           []ValueID{thenValue, elseValue},
+			IncomingBlocks: []int{thenBlockID, elseBlockID},
+		})
+		return result, nil
+
+	case *ast.UnaryExpr:
+		value, err := c.lowerExpr(e.Operand)
+		if err != nil {
+			return 0, err
+		}
+		return emit(Instruction{
+			Op:       OpUnary,
+			Operator: e.Operator,
+			Args:     []ValueID{value},
+		}), nil
+
+	case *ast.BinaryExpr:
+		left, err := c.lowerExpr(e.Left)
+		if err != nil {
+			return 0, err
+		}
+		right, err := c.lowerExpr(e.Right)
+		if err != nil {
+			return 0, err
+		}
+		return emit(Instruction{
+			Op:       OpBinary,
+			Operator: e.Operator,
+			Args:     []ValueID{left, right},
+		}), nil
+
+	case *ast.CallExpr:
+		callee, err := c.lowerExpr(e.Callee)
+		if err != nil {
+			return 0, err
+		}
+
+		args := []ValueID{callee}
+		for _, arg := range e.Arguments {
+			value, err := c.lowerExpr(arg)
+			if err != nil {
+				return 0, err
+			}
+			args = append(args, value)
+		}
+
+		return emit(Instruction{
+			Op:   OpCall,
+			Args: args,
+		}), nil
+
+	case *ast.MemberExpr:
+		object, err := c.lowerExpr(e.Object)
+		if err != nil {
+			return 0, err
+		}
+		return emit(Instruction{
+			Op:   OpMember,
+			Name: e.Member,
+			Args: []ValueID{object},
+		}), nil
+
+	case *ast.IndexExpr:
+		object, err := c.lowerExpr(e.Object)
+		if err != nil {
+			return 0, err
+		}
+		index, err := c.lowerExpr(e.Index)
+		if err != nil {
+			return 0, err
+		}
+		return emit(Instruction{
+			Op:   OpIndex,
+			Args: []ValueID{object, index},
+		}), nil
+
+	default:
+		return c.lowerer.lowerExpr(
+			expr,
+			&c.blocks[c.current].Instructions,
+		)
+	}
+}
 func (c *cfgBuilder) lowerStmt(stmt ast.Stmt) error {
 	if stmt == nil {
 		return fmt.Errorf("cannot lower nil statement")
@@ -488,10 +628,63 @@ func (c *cfgBuilder) lowerStmt(stmt ast.Stmt) error {
 		return nil
 
 	default:
-		return c.lowerer.lowerStmt(
-			stmt,
-			&c.blocks[c.current].Instructions,
-		)
+		return c.lowerer.lowerStmtWithCFG(stmt, c)
+	}
+}
+func (l *lowerer) lowerStmtWithCFG(
+	stmt ast.Stmt,
+	c *cfgBuilder,
+) error {
+	switch s := stmt.(type) {
+	case *ast.VariableDeclStmt:
+		if s.Name == nil {
+			return fmt.Errorf("variable declaration has no name")
+		}
+		value, err := c.lowerExpr(s.Value)
+		if err != nil {
+			return err
+		}
+		c.emit(Instruction{
+			Op: OpStore, Type: s.TypeName,
+			Name: s.Name.Name, Args: []ValueID{value},
+		})
+		return nil
+
+	case *ast.AssignmentStmt:
+		target, ok := s.Target.(*ast.Identifier)
+		if !ok {
+			return fmt.Errorf("unsupported assignment target %T", s.Target)
+		}
+		if s.Operator != "=" {
+			return fmt.Errorf("unsupported assignment operator %q", s.Operator)
+		}
+		value, err := c.lowerExpr(s.Value)
+		if err != nil {
+			return err
+		}
+		c.emit(Instruction{
+			Op: OpStore, Name: target.Name, Args: []ValueID{value},
+		})
+		return nil
+
+	case *ast.ReturnStmt:
+		var args []ValueID
+		if s.Value != nil {
+			value, err := c.lowerExpr(s.Value)
+			if err != nil {
+				return err
+			}
+			args = append(args, value)
+		}
+		c.emit(Instruction{Op: OpReturn, Args: args})
+		return nil
+
+	case *ast.ExpressionStmt:
+		_, err := c.lowerExpr(s.Expression)
+		return err
+
+	default:
+		return l.lowerStmt(stmt, &c.blocks[c.current].Instructions)
 	}
 }
 func (l *lowerer) emit(out *[]Instruction, inst Instruction) ValueID {
@@ -683,4 +876,56 @@ func (l *lowerer) lowerExpr(
 	default:
 		return 0, fmt.Errorf("unsupported expression: %T", expr)
 	}
+}
+func containsConditionalExpr(stmt ast.Stmt) bool {
+	var hasConditional func(ast.Expr) bool
+
+	hasConditional = func(expr ast.Expr) bool {
+		switch e := expr.(type) {
+		case *ast.ConditionalExpr:
+			return true
+		case *ast.UnaryExpr:
+			return hasConditional(e.Operand)
+		case *ast.BinaryExpr:
+			return hasConditional(e.Left) || hasConditional(e.Right)
+		case *ast.CallExpr:
+			if hasConditional(e.Callee) {
+				return true
+			}
+			for _, arg := range e.Arguments {
+				if hasConditional(arg) {
+					return true
+				}
+			}
+		case *ast.MemberExpr:
+			return hasConditional(e.Object)
+		case *ast.IndexExpr:
+			return hasConditional(e.Object) || hasConditional(e.Index)
+		case *ast.ArrayExpr:
+			for _, item := range e.Elements {
+				if hasConditional(item) {
+					return true
+				}
+			}
+		case *ast.TupleExpr:
+			for _, item := range e.Elements {
+				if hasConditional(item) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	switch s := stmt.(type) {
+	case *ast.VariableDeclStmt:
+		return hasConditional(s.Value)
+	case *ast.AssignmentStmt:
+		return hasConditional(s.Target) || hasConditional(s.Value)
+	case *ast.ExpressionStmt:
+		return hasConditional(s.Expression)
+	case *ast.ReturnStmt:
+		return hasConditional(s.Value)
+	}
+	return false
 }
